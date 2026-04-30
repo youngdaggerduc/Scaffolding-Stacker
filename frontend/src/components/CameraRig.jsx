@@ -1,38 +1,50 @@
-import { useRef } from 'react'
+import { useRef, useEffect } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 
-export function CameraRig({ targetY, stackHeight, isGameOver }) {
+export function CameraRig({ targetY, stackHeight, isGameOver, impulse = 0, onImpulseConsumed }) {
   const { camera } = useThree()
   const smoothY = useRef(0)
   const shakeTimer = useRef(0)
+  const shakeIntensity = useRef(0)
   const wasGameOver = useRef(false)
 
+  useEffect(() => {
+    if (impulse > 0) {
+      shakeTimer.current = 0.35 + impulse * 0.15
+      shakeIntensity.current = Math.min(0.55, 0.18 + impulse * 0.2)
+      onImpulseConsumed?.()
+    }
+  }, [impulse, onImpulseConsumed])
+
   useFrame(({ clock }, delta) => {
-    // Trigger shake exactly once when game over flips on
     if (isGameOver && !wasGameOver.current) {
       wasGameOver.current = true
-      shakeTimer.current = 0.8  // shake duration in seconds
+      shakeTimer.current = 0.9
+      shakeIntensity.current = 0.55
     }
 
-    smoothY.current += (targetY - smoothY.current) * 0.04
+    smoothY.current += (targetY - smoothY.current) * 0.045
 
-    // Sway grows with tower height — adds mounting tension
-    const swayAmp = Math.min(stackHeight * 0.009, 0.28)
+    // Pull back as the tower grows so the whole stack stays in frame
+    const zoom = 14 + Math.min(stackHeight * 0.18, 16)
+    const yLift = 7 + Math.min(stackHeight * 0.05, 4)
+
+    const swayAmp = Math.min(stackHeight * 0.009, 0.32)
     const sway = Math.sin(clock.elapsedTime * 0.55) * swayAmp
 
-    // Screen shake — decaying random offset
     let shakeX = 0, shakeY = 0
     if (shakeTimer.current > 0) {
       shakeTimer.current = Math.max(0, shakeTimer.current - delta)
-      const decay = shakeTimer.current / 0.8
-      shakeX = (Math.random() * 2 - 1) * 0.45 * decay
-      shakeY = (Math.random() * 2 - 1) * 0.25 * decay
+      const decay = Math.min(1, shakeTimer.current / 0.5)
+      const amp = shakeIntensity.current * decay
+      shakeX = (Math.random() * 2 - 1) * amp
+      shakeY = (Math.random() * 2 - 1) * amp * 0.6
     }
 
     camera.position.set(
       sway + shakeX,
-      smoothY.current + 7 + shakeY,
-      14
+      smoothY.current + yLift + shakeY,
+      zoom
     )
     camera.lookAt(sway * 0.4, smoothY.current + 1, 0)
   })

@@ -16,6 +16,9 @@ export function PhysicsProvider({ children }) {
     // More iterations = better contact resolution for tall stacks
     world.solver.iterations = 20
     world.solver.tolerance = 0.001
+    // High friction keeps pieces from sliding off each other; minimal bounce
+    world.defaultContactMaterial.friction = 0.7
+    world.defaultContactMaterial.restitution = 0.05
     worldRef.current = world
   }
 

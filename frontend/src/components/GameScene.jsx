@@ -1,33 +1,49 @@
 import { useState, useRef, useEffect } from 'react'
+import { useFrame } from '@react-three/fiber'
 import { PhysicsProvider } from '../physics/PhysicsProvider'
 import { Ground } from './Ground'
 import { SwingingPiece } from './SwingingPiece'
 import { DroppedPiece } from './DroppedPiece'
 import { CameraRig } from './CameraRig'
 import { ScaffoldFrame } from './ScaffoldFrame'
-import { SWING_HEIGHT_OFFSET, PIECE_TYPES, getPieceHeight, randomPieceType } from '../constants'
+import { SWING_HEIGHT_OFFSET, SWING_AMPLITUDE } from '../constants'
+import { MODULES, pickModule, pickChaosColors, getModuleHeight } from '../modules/moduleDefinitions'
 
 let nextId = 0
 
-export function GameScene({ onScoreChange, onGameOver, onPieceTypeChange, onHeightChange }) {
+// Polls the swing position ref each frame and reports it as a [-1, 1] aim ratio.
+// Lives inside <Canvas> so it can use useFrame; results go up via callback.
+function AimReporter({ swingPositionRef, onAim }) {
+  useFrame(() => {
+    const x = swingPositionRef.current?.x ?? 0
+    onAim(Math.max(-1, Math.min(1, x / SWING_AMPLITUDE)))
+  })
+  return null
+}
+
+export function GameScene({
+  onScoreChange, onGameOver, onModuleChange, onHeightChange, onAim,
+}) {
   const [pieces, setPieces] = useState([])
   const [phase, setPhase] = useState('swinging')
   const [stackTopY, setStackTopY] = useState(0)
   const [score, setScore] = useState(0)
-  const [nextPiece, setNextPiece] = useState(() => PIECE_TYPES[0])
+  const [nextModule, setNextModule] = useState(() => MODULES[0])
+  const [nextColors, setNextColors] = useState(() => pickChaosColors(MODULES[0].colorRoles))
+  const [shakeImpulse, setShakeImpulse] = useState(0)
 
   const swingPositionRef = useRef({ x: 0, y: 0, z: 0 })
   const phaseRef = useRef('swinging')
   const scoreRef = useRef(0)
-  const stackTopRef = useRef(0)  // ref copy so settle callback is never stale
+  const stackTopRef = useRef(0)
   useEffect(() => { phaseRef.current = phase }, [phase])
   useEffect(() => { scoreRef.current = score }, [score])
   useEffect(() => { stackTopRef.current = stackTopY }, [stackTopY])
 
-  const swingSpeed = 1.2 + score * 0.06
-  const swingHeight = stackTopY + SWING_HEIGHT_OFFSET
+  const swingSpeed = 1.0 + score * 0.04
+  const swingHeight = stackTopY + SWING_HEIGHT_OFFSET + getModuleHeight(nextModule) / 2
 
-  useEffect(() => { onPieceTypeChange?.(nextPiece) }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { onModuleChange?.(nextModule) }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const onKey = (e) => {
@@ -37,25 +53,25 @@ export function GameScene({ onScoreChange, onGameOver, onPieceTypeChange, onHeig
 
       const spawnPos = { ...swingPositionRef.current }
       const id = nextId++
-      const pieceType = nextPiece
-      const upcoming = randomPieceType(scoreRef.current)
-      setNextPiece(upcoming)
-      onPieceTypeChange?.(upcoming)
-      setPieces(prev => [...prev, { id, spawnPos, pieceType }])
+      const mod = nextModule
+      const colors = nextColors
+      const upcomingMod = pickModule(mod.id)
+      const upcomingColors = pickChaosColors(upcomingMod.colorRoles)
+      setNextModule(upcomingMod)
+      setNextColors(upcomingColors)
+      onModuleChange?.(upcomingMod)
+      setPieces(prev => [...prev, { id, spawnPos, mod, colors }])
       setPhase('falling')
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [nextPiece]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [nextModule, nextColors]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleSettle = (finalPos, pieceType) => {
-    const pieceH = getPieceHeight(pieceType)
+  const handleSettle = (finalPos, mod) => {
+    const pieceH = getModuleHeight(mod)
     const currentTop = stackTopRef.current
-
-    // Fell off: piece settled more than 1.5m below the current stack top.
-    // Works reliably for locked pieces since they can't tumble into odd positions.
     const stackExists = currentTop > 0.3
-    const fellOff = stackExists && finalPos.y < currentTop - 1.5
+    const fellOff = stackExists && finalPos.y < currentTop - pieceH * 0.6 - 0.5
 
     if (fellOff) {
       setPhase('gameover')
@@ -77,30 +93,39 @@ export function GameScene({ onScoreChange, onGameOver, onPieceTypeChange, onHeig
     setPhase('swinging')
   }
 
+  const handleLanded = (mod, mass) => {
+    setShakeImpulse(Math.min(1.5, mass * 0.35))
+  }
+
   return (
     <>
-      <ambientLight intensity={0.4} />
+      <ambientLight intensity={0.55} />
       <directionalLight
         position={[10, 20, 8]}
-        intensity={1.8}
+        intensity={1.6}
         castShadow
         shadow-mapSize={[2048, 2048]}
         shadow-camera-near={0.1}
-        shadow-camera-far={100}
-        shadow-camera-left={-20}
-        shadow-camera-right={20}
-        shadow-camera-top={20}
-        shadow-camera-bottom={-20}
+        shadow-camera-far={120}
+        shadow-camera-left={-30}
+        shadow-camera-right={30}
+        shadow-camera-top={40}
+        shadow-camera-bottom={-30}
       />
-      <pointLight position={[-8, 6, -6]} intensity={0.6} color="#ffaa44" />
+      <pointLight position={[-8, 6, -6]} intensity={0.5} color="#ff66cc" />
+      <pointLight position={[8, 4, 6]} intensity={0.4} color="#66ffe7" />
 
       <CameraRig
         targetY={stackTopY}
         stackHeight={stackTopY}
         isGameOver={phase === 'gameover'}
+        impulse={shakeImpulse}
+        onImpulseConsumed={() => setShakeImpulse(0)}
       />
 
       <ScaffoldFrame floorsBuilt={score} />
+
+      <AimReporter swingPositionRef={swingPositionRef} onAim={onAim || (() => {})} />
 
       <PhysicsProvider>
         <Ground />
@@ -109,7 +134,8 @@ export function GameScene({ onScoreChange, onGameOver, onPieceTypeChange, onHeig
           <SwingingPiece
             height={swingHeight}
             speed={swingSpeed}
-            pieceType={nextPiece}
+            module={nextModule}
+            colors={nextColors}
             positionRef={swingPositionRef}
           />
         )}
@@ -118,10 +144,12 @@ export function GameScene({ onScoreChange, onGameOver, onPieceTypeChange, onHeig
           <DroppedPiece
             key={p.id}
             position={p.spawnPos}
-            pieceType={p.pieceType}
+            module={p.mod}
+            colors={p.colors}
+            onLanded={handleLanded}
             onSettle={
               phase === 'falling' && i === pieces.length - 1
-                ? (pos) => handleSettle(pos, p.pieceType)
+                ? (pos) => handleSettle(pos, p.mod)
                 : undefined
             }
           />
